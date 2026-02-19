@@ -1,0 +1,148 @@
+(* SIEM Rule DSL - Complete Grammar *)
+(* All rule logic must be expressible in this DSL *)
+
+(* ============= TOP LEVEL ============= *)
+
+rule_file = { rule_definition | aggregation_rule | correlation_rule | cross_correlation_rule } ;
+
+(* ============= BASIC RULE ============= *)
+
+rule_definition = "RULE", rule_id, 
+                  [ parent_clause ],
+                  when_clause,
+                  then_clause,
+                  "END" ;
+
+rule_id = identifier ;
+parent_clause = "PARENT", rule_id ;
+
+when_clause = "WHEN", condition_expression ;
+then_clause = "THEN", { rule_action }, [ enrich_clause ] ;
+
+(* ============= AGGREGATION RULE ============= *)
+
+aggregation_rule = "RULE", rule_id,
+                   "WHEN", rule_match_condition,
+                   aggregate_clause,
+                   then_clause,
+                   "END" ;
+
+aggregate_clause = "AGGREGATE", 
+                   "count", comparison_op, number,
+                   "within", duration ;
+
+(* ============= CORRELATION RULE ============= *)
+
+correlation_rule = "RULE", rule_id,
+                   "WHEN", rule_match_condition,
+                   correlate_clause,
+                   then_clause,
+                   "END" ;
+
+correlate_clause = "CORRELATE",
+                   "by", field_list,
+                   "count", comparison_op, number,
+                   "within", duration ;
+
+field_list = field_name, { ",", field_name } ;
+
+(* ============= CROSS-CORRELATION RULE ============= *)
+
+cross_correlation_rule = "RULE", rule_id,
+                         "WHEN", multi_rule_condition,
+                         "WITHIN", duration,
+                         then_clause,
+                         "END" ;
+
+multi_rule_condition = rule_match_condition, 
+                       { boolean_op, rule_match_condition } ;
+
+rule_match_condition = "RULE_MATCHED", "(", string_literal, ")" ;
+
+(* ============= CONDITIONS ============= *)
+
+condition_expression = or_expression ;
+
+or_expression = and_expression, { "OR", and_expression } ;
+
+and_expression = not_expression, { "AND", not_expression } ;
+
+not_expression = [ "NOT" ], primary_expression ;
+
+primary_expression = comparison
+                   | set_operation
+                   | string_operation
+                   | regex_operation
+                   | grouped_expression ;
+
+grouped_expression = "(", condition_expression, ")" ;
+
+(* ============= COMPARISONS ============= *)
+
+comparison = field_access, comparison_op, value ;
+
+comparison_op = "==" | "!=" | ">" | "<" | ">=" | "<=" ;
+
+(* ============= SET OPERATIONS ============= *)
+
+set_operation = field_access, set_op, set_value ;
+
+set_op = "IN" | "NOT IN" ;
+
+set_value = "[", value, { ",", value }, "]"
+          | set_name ;
+
+set_name = identifier ; (* predefined sets like private_ranges *)
+
+(* ============= STRING OPERATIONS ============= *)
+
+string_operation = field_access, string_op, string_literal ;
+
+string_op = "contains" | "starts_with" | "ends_with" ;
+
+(* ============= REGEX OPERATIONS ============= *)
+
+regex_operation = field_access, "matches", regex_literal ;
+
+regex_literal = "/", (* regex pattern *), "/" ;
+
+(* ============= FIELD ACCESS ============= *)
+
+field_access = field_name, { ".", field_name } ;
+
+field_name = identifier ;
+
+(* ============= ACTIONS ============= *)
+
+rule_action = severity_action
+            | noalert_action
+            | tags_action
+            | enrich_action ;
+
+severity_action = "severity", "=", severity_value ;
+severity_value = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" ;
+
+noalert_action = "noalert", "=", boolean_value ;
+boolean_value = "0" | "1" ;
+
+tags_action = "tags", "=", "[", string_literal, { ",", string_literal }, "]" ;
+
+enrich_action = "enrich", "{", { enrich_field }, "}" ;
+enrich_field = field_name, "=", value ;
+
+(* ============= PRIMITIVES ============= *)
+
+identifier = letter, { letter | digit | "_" } ;
+number = digit, { digit } ;
+duration = number, time_unit ;
+time_unit = "s" | "m" | "h" | "d" ;
+string_literal = '"', (* any characters *), '"' ;
+value = number | string_literal | boolean_value ;
+
+letter = "A" | "B" | (* ... *) | "z" ;
+digit = "0" | "1" | (* ... *) | "9" ;
+boolean_op = "AND" | "OR" | "NOT" ;
+
+(* ============= COMMENTS ============= *)
+
+comment = "#", (* any characters until newline *) ;
