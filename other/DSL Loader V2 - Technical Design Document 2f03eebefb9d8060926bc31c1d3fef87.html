@@ -1,0 +1,478 @@
+<h1 id="dsl-loader-v2---technical-design-document">DSL Loader V2&nbsp;- Technical&nbsp;Design&nbsp;Document</h1>
+<h2 id="overview"><strong>Overview</strong></h2>
+<p>The&nbsp;DSL Loader V2 is&nbsp;responsible&nbsp;for loading, parsing, validating, and organizing&nbsp;SIEM detection&nbsp;rules from&nbsp;.dsl&nbsp;files and lookup&nbsp;lists&nbsp;from&nbsp;.txt&nbsp;files. It serves&nbsp;as the bridge&nbsp;between raw&nbsp;rule&nbsp;files&nbsp;on&nbsp;disk and the DSL&nbsp;Executor V2 that evaluates events&nbsp;at&nbsp;runtime.</p>
+<hr>
+<h2 id="design-goals"><strong>Design&nbsp;Goals</strong></h2>
+<ol>
+<li><strong>Zero-downtime rule&nbsp;updates</strong>&nbsp;- Hot&nbsp;reload without&nbsp;restarting the&nbsp;engine</li>
+<li><strong>O(1) rule lookup</strong>&nbsp;- Pre-indexed by&nbsp;ID and level</li>
+<li><strong>Rich&nbsp;validation</strong>&nbsp;- Catch&nbsp;errors at&nbsp;load time, not runtime</li>
+<li><strong>List/CDB support</strong>&nbsp;- External&nbsp;lookup&nbsp;tables&nbsp;for dynamic matching</li>
+<li><strong>Production-ready</strong>&nbsp;- Proper&nbsp;error handling, logging, metrics</li>
+</ol>
+<hr>
+<h2 id="configuration"><strong>Configuration</strong></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Env&nbsp;Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>rules_dir</td>
+<td>PathBuf</td>
+<td>"rules/"</td>
+<td>DSL_RULES_DIR</td>
+<td>Directory containing&nbsp;.dsl&nbsp;files</td>
+</tr>
+<tr>
+<td>lists_dir</td>
+<td>PathBuf</td>
+<td>"lists/"</td>
+<td>DSL_LISTS_DIR</td>
+<td>Directory containing&nbsp;.txt&nbsp;lookup&nbsp;files</td>
+</tr>
+<tr>
+<td>recursive</td>
+<td>bool</td>
+<td>true</td>
+<td>-</td>
+<td>Scan&nbsp;subdirectories for&nbsp;rules</td>
+</tr>
+<tr>
+<td>fail_on_parse_error</td>
+<td>bool</td>
+<td>true</td>
+<td>-</td>
+<td>Stop on&nbsp;first error vs&nbsp;collect all</td>
+</tr>
+<tr>
+<td>hot_reload</td>
+<td>bool</td>
+<td>false</td>
+<td>DSL_HOT_RELOAD</td>
+<td>Watch&nbsp;directories&nbsp;for changes</td>
+</tr>
+<tr>
+<td>hot_reload_interval_secs</td>
+<td>u64</td>
+<td>30</td>
+<td>DSL_HOT_RELOAD_INTERVAL</td>
+<td>How&nbsp;often to check for changes</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="architecture"><strong>Architecture</strong></h2>
+<pre><code class="language-mermaid">graph TD
+    %% Start
+    Start((STARTUP)) --&gt; Config
+
+    %% Config Section
+    Config["&lt;b&gt;LoaderConfig&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;rules_dir: 'rules/'&lt;br/&gt;lists_dir: 'lists/'&lt;br/&gt;recursive: true&lt;br/&gt;fail_on_parse_error: true&lt;br/&gt;hot_reload: true&lt;br/&gt;hot_reload_interval_secs: 30"]
+
+    Config --&gt; Rules
+    Config --&gt; Lists
+
+    %% Loading Section
+    subgraph Loading ["&amp;nbsp;"]
+        Rules["&lt;b&gt;RULES LOADING&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;rules/&lt;br/&gt;├── fortigate/&lt;br/&gt;│   └── firewall.dsl&lt;br/&gt;├── sophos/&lt;br/&gt;│   └── xgs.dsl&lt;br/&gt;└── generic.dsl&lt;br/&gt;&lt;br/&gt;For each .dsl:&lt;br/&gt;1. Read file&lt;br/&gt;2. Parse → DslRule&lt;br/&gt;3. Collect all rules"]
+        
+        Lists["&lt;b&gt;LISTS LOADING&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;lists/&lt;br/&gt;├── blocked_users.txt&lt;br/&gt;├── suspicious_ports.txt&lt;br/&gt;└── internal_ips.txt&lt;br/&gt;&lt;br/&gt;Format:&lt;br/&gt;# comment (ignored)&lt;br/&gt;value1&lt;br/&gt;value2&lt;br/&gt;&lt;br/&gt;Output:&lt;br/&gt;HashMap&amp;lt;name, values&amp;gt;"]
+    end
+
+    Rules --&gt; Validation
+    Lists --&gt; Validation
+
+    %% Validation Section
+    Validation["&lt;b&gt;VALIDATION&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;1. Build rule index: rule_id → DslRule&lt;br/&gt;&lt;br/&gt;2. Parent existence check:&lt;br/&gt;For each `requires { any_of(sid: [X, Y]) }`:&lt;br/&gt;- Verify rule X exists&lt;br/&gt;- Verify rule Y exists&lt;br/&gt;&lt;br/&gt;3. Level hierarchy check:&lt;br/&gt;- Parent rule level must &amp;lt; child rule level&lt;br/&gt;&lt;br/&gt;4. Circular dependency detection:&lt;br/&gt;- DFS traversal to find cycles&lt;br/&gt;&lt;br/&gt;5. Sort by level: [level 0 rules] → [level 1] → [level 2] → ..."]
+
+    Validation --&gt; LoadedRules
+
+    %% LoadedRules Section
+    LoadedRules["&lt;b&gt;LoadedRules&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;rules: Vec&amp;lt;DslRule&amp;gt; // All rules, level-sorted&lt;br/&gt;rules_by_id: HashMap&amp;lt;String, DslRule&amp;gt; // O(1) lookup by ID&lt;br/&gt;rules_by_level: Vec&amp;lt;Vec&amp;lt;DslRule&amp;gt;&amp;gt; // rules_by_level[0] = lvl 0&lt;br/&gt;lists: LoadedLists // CDB/lookup tables&lt;br/&gt;stats: LoadStats // Metrics"]
+
+    %% Split into Runtime
+    LoadedRules --&gt; Executor
+    LoadedRules --&gt; Watcher
+
+    Executor["&lt;b&gt;DSL Executor&lt;/b&gt;&lt;br/&gt;(consumes)"]
+    Watcher["&lt;b&gt;Hot Reload Watcher&lt;/b&gt;&lt;br/&gt;(if enabled)"]
+
+    Watcher --&gt; OnChange
+
+    OnChange["&lt;b&gt;On file change:&lt;/b&gt;&lt;br/&gt;1. Reload all&lt;br/&gt;2. Validate&lt;br/&gt;3. Atomic swap&lt;br/&gt;Arc&amp;lt;RwLock&amp;gt;"]
+
+    %% Styling
+    style Start fill:#f9f,stroke:#333
+    style Config text-align:left
+    style Rules text-align:left
+    style Lists text-align:left
+    style Validation text-align:left
+    style LoadedRules text-align:left
+    style OnChange text-align:left
+</code></pre>
+<hr>
+<h2 id="data-structures"><strong>Data&nbsp;Structures</strong></h2>
+<p><strong>LoadedLists</strong></p>
+<p>Holds&nbsp;all&nbsp;lookup&nbsp;tables loaded from the&nbsp;lists/&nbsp;directory.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>lists</td>
+<td>HashMap&lt;String, HashSet&gt;</td>
+<td>String&nbsp;lookups&nbsp;(users, domains)</td>
+</tr>
+<tr>
+<td>ip_lists</td>
+<td>HashMap&lt;String, Vec&gt;</td>
+<td>IP/CIDR lookups with&nbsp;network&nbsp;matching</td>
+</tr>
+<tr>
+<td>port_lists</td>
+<td>HashMap&lt;String, HashSet&gt;</td>
+<td>Port number&nbsp;lookups</td>
+</tr>
+</tbody></table>
+<p><strong>List&nbsp;file&nbsp;naming&nbsp;convention:</strong></p>
+<ul>
+<li>Filename&nbsp;without&nbsp;extension becomes&nbsp;the&nbsp;list name</li>
+<li>blocked_users.txt&nbsp;→ list&nbsp;name&nbsp;is&nbsp;blocked_users</li>
+<li>Rules&nbsp;reference&nbsp;as:&nbsp;field["user"]&nbsp;IN&nbsp;list("blocked_users")</li>
+</ul>
+<p><strong>LoadedRules</strong></p>
+<p>Complete&nbsp;output&nbsp;structure&nbsp;ready&nbsp;for the executor.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>rules</td>
+<td>Vec</td>
+<td>All&nbsp;rules, sorted by level</td>
+</tr>
+<tr>
+<td>rules_by_id</td>
+<td>HashMap&lt;String, DslRule&gt;</td>
+<td>For&nbsp;requires/parent&nbsp;lookup</td>
+</tr>
+<tr>
+<td>rules_by_level</td>
+<td>Vec&lt;Vec&gt;</td>
+<td>Index&nbsp;0 = level 0&nbsp;rules, etc.</td>
+</tr>
+<tr>
+<td>lists</td>
+<td>LoadedLists</td>
+<td>All&nbsp;lookup tables</td>
+</tr>
+<tr>
+<td>stats</td>
+<td>LoadStats</td>
+<td>Load metrics</td>
+</tr>
+</tbody></table>
+<p><strong>LoadStats</strong></p>
+<p>Metrics collected during loading.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>total_rules</td>
+<td>usize</td>
+<td>Number&nbsp;of rules loaded</td>
+</tr>
+<tr>
+<td>total_files</td>
+<td>usize</td>
+<td>Number&nbsp;of&nbsp;.dsl files processed</td>
+</tr>
+<tr>
+<td>total_lists</td>
+<td>usize</td>
+<td>Number of list&nbsp;files loaded</td>
+</tr>
+<tr>
+<td>rules_per_level</td>
+<td>Vec</td>
+<td>Count&nbsp;per&nbsp;level</td>
+</tr>
+<tr>
+<td>load_time_ms</td>
+<td>u64</td>
+<td>Total&nbsp;load duration</td>
+</tr>
+<tr>
+<td>last_reload</td>
+<td>DateTime</td>
+<td>Timestamp of last load/reload</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="error-types"><strong>Error&nbsp;Types</strong></h2>
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th>When</th>
+<th>Contains</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>DirectoryNotFound</td>
+<td>rules_dir or&nbsp;lists_dir doesn't exist</td>
+<td>Path</td>
+</tr>
+<tr>
+<td>FileReadError</td>
+<td>Cannot read file</td>
+<td>Path, IO error</td>
+</tr>
+<tr>
+<td>ParseError</td>
+<td>DSL syntax&nbsp;error</td>
+<td>File, line&nbsp;number, message</td>
+</tr>
+<tr>
+<td>MissingParent</td>
+<td>requires&nbsp;references&nbsp;non-existent rule</td>
+<td>Rule ID, missing&nbsp;parent ID</td>
+</tr>
+<tr>
+<td>CircularDependency</td>
+<td>Rule&nbsp;A&nbsp;→ B&nbsp;→ A</td>
+<td>List&nbsp;of rule&nbsp;IDs in&nbsp;cycle</td>
+</tr>
+<tr>
+<td>LevelViolation</td>
+<td>Child level &lt;= parent level</td>
+<td>Rule ID, parent&nbsp;ID, levels</td>
+</tr>
+<tr>
+<td>DuplicateRuleId</td>
+<td>Same&nbsp;rule ID in&nbsp;multiple files</td>
+<td>Rule ID, file paths</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="api-functions"><strong>API&nbsp;Functions</strong></h2>
+<p><strong>Primary&nbsp;API</strong></p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Input</th>
+<th>Output</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>load_all</td>
+<td>LoaderConfig</td>
+<td>Result</td>
+<td>Main&nbsp;entry point&nbsp;- loads everything</td>
+</tr>
+<tr>
+<td>load_rules_from_directory</td>
+<td>path, recursive</td>
+<td>Result&lt;Vec&gt;</td>
+<td>Load rules only</td>
+</tr>
+<tr>
+<td>load_lists_from_directory</td>
+<td>path</td>
+<td>Result</td>
+<td>Load lists only</td>
+</tr>
+<tr>
+<td>validate_rules</td>
+<td>&amp;[DslRule]</td>
+<td>Result&lt;()&gt;</td>
+<td>Validate without&nbsp;loading</td>
+</tr>
+</tbody></table>
+<p><strong>Utility&nbsp;API</strong></p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Input</th>
+<th>Output</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>load_rules_from_file</td>
+<td>file&nbsp;path</td>
+<td>Result&lt;Vec&gt;</td>
+<td>Single&nbsp;file load</td>
+</tr>
+<tr>
+<td>validate_file</td>
+<td>file path</td>
+<td>Result&lt;()&gt;</td>
+<td>Syntax&nbsp;check&nbsp;only</td>
+</tr>
+<tr>
+<td>reload</td>
+<td>&amp;LoaderConfig</td>
+<td>Result</td>
+<td>Force&nbsp;reload</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="hot-reload-mechanism"><strong>Hot&nbsp;Reload Mechanism</strong></h2>
+<p>When&nbsp;hot_reload:&nbsp;true:</p>
+<ol>
+<li><strong>Background watcher thread</strong>&nbsp;spawns at&nbsp;startup</li>
+<li><strong>Polling&nbsp;interval</strong>&nbsp;checks&nbsp;file&nbsp;modification&nbsp;times&nbsp;every&nbsp;N&nbsp;seconds</li>
+<li><strong>On&nbsp;change&nbsp;detected:</strong></li>
+</ol>
+<ul>
+<li>Load all rules into&nbsp;new&nbsp;LoadedRules&nbsp;struct</li>
+<li>Validate the&nbsp;new ruleset</li>
+<li>If&nbsp;valid: atomic&nbsp;swap via&nbsp;Arc&lt;RwLock&gt;</li>
+<li>If invalid: log&nbsp;error, keep&nbsp;old rules&nbsp;active</li>
+</ul>
+<ol>
+<li><strong>Zero-downtime</strong>&nbsp;- executor&nbsp;continues with&nbsp;old rules during&nbsp;reload</li>
+</ol>
+<pre><code class="language-mermaid">graph TD
+    %% Shared State
+    SharedState["fa:fa-database Arc&amp;lt;RwLock&amp;lt;LoadedRules&amp;gt;&amp;gt;"]
+
+    %% Executor Thread
+    subgraph Executor [Executor - Thread 1]
+        Eval["evaluate(event)"]
+    end
+
+    %% Watcher Thread
+    subgraph Watcher [Watcher - Thread 2]
+        Check["Check files (every 30s)"]
+        Changed{"File changed?"}
+        Load["Load new rules"]
+        Validate{"Validate"}
+        Write["write() to RwLock"]
+        Error["Log error &amp; Keep old"]
+    end
+
+    %% Flow logic
+    Eval -.-&gt;|read| SharedState
+    Check --&gt; Changed
+    Changed --&gt;|Yes| Load
+    Changed --&gt;|No| Check
+    Load --&gt; Validate
+    Validate --&gt;|Valid| Write
+    Validate --&gt;|Invalid| Error
+    Write -.-&gt;|update| SharedState
+
+    %% Styling
+    style SharedState fill:#f9f,stroke:#333,stroke-width:2px
+    style Error fill:#fee,stroke:#b00
+    style Write fill:#efe,stroke:#0b0
+</code></pre>
+<hr>
+<h2 id="file-format-conventions"><strong>File&nbsp;Format&nbsp;Conventions</strong></h2>
+<p><strong>Rule Files (.dsl)</strong></p>
+<ul>
+<li>Extension:&nbsp;.dsl</li>
+<li>Encoding: UTF-8</li>
+<li>Comments: Lines&nbsp;starting with&nbsp;#</li>
+<li>Multiple&nbsp;rules per file allowed</li>
+<li>Subdirectory&nbsp;organization&nbsp;recommended by&nbsp;vendor</li>
+</ul>
+<p><strong>List Files (.txt)</strong></p>
+<ul>
+<li>Extension:&nbsp;.txt</li>
+<li>Encoding: UTF-8</li>
+<li>One&nbsp;value&nbsp;per line</li>
+<li>Comments: Lines starting with&nbsp;#</li>
+<li>Empty&nbsp;lines ignored</li>
+<li>Filename&nbsp;(without extension)&nbsp;= list name</li>
+</ul>
+<hr>
+<h2 id="usage-example"><strong>Usage&nbsp;Example</strong></h2>
+<p>STARTUP:</p>
+<p>1.&nbsp;Create&nbsp;LoaderConfig&nbsp;(from&nbsp;env&nbsp;or&nbsp;defaults)</p>
+<p>2.&nbsp;Call&nbsp;load_all(config)</p>
+<p>3.&nbsp;Pass&nbsp;LoadedRules&nbsp;to&nbsp;DslExecutorV2::new()</p>
+<p>4.&nbsp;If&nbsp;hot_reload&nbsp;enabled,&nbsp;watcher&nbsp;thread&nbsp;starts</p>
+<p>RUNTIME:</p>
+<p>1.&nbsp;Event&nbsp;arrives</p>
+<p>2.&nbsp;Executor&nbsp;reads&nbsp;from&nbsp;Arc&lt;RwLock&gt;</p>
+<p>3.&nbsp;Evaluates&nbsp;rules&nbsp;by&nbsp;level</p>
+<p>4.&nbsp;Returns&nbsp;matches</p>
+<p>HOT&nbsp;RELOAD&nbsp;(background):</p>
+<p>1.&nbsp;Watcher&nbsp;detects&nbsp;file&nbsp;change</p>
+<p>2.&nbsp;Reloads&nbsp;and&nbsp;validates</p>
+<p>3.&nbsp;Atomic&nbsp;swap&nbsp;if&nbsp;valid</p>
+<p>4.&nbsp;Next&nbsp;event&nbsp;uses&nbsp;new&nbsp;rules</p>
+<hr>
+<h2 id="performance-characteristics"><strong>Performance&nbsp;Characteristics</strong></h2>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Complexity</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Initial load</td>
+<td>O(n)</td>
+<td>n = total rules across all files</td>
+</tr>
+<tr>
+<td>Rule&nbsp;lookup by&nbsp;ID</td>
+<td>O(1)</td>
+<td>HashMap</td>
+</tr>
+<tr>
+<td>Rules by level</td>
+<td>O(1)</td>
+<td>Pre-indexed Vec</td>
+</tr>
+<tr>
+<td>List lookup</td>
+<td>O(1)</td>
+<td>HashSet</td>
+</tr>
+<tr>
+<td>Hot reload</td>
+<td>O(n)</td>
+<td>Full reload, atomic swap</td>
+</tr>
+<tr>
+<td>Validation</td>
+<td>O(n)</td>
+<td>Single pass with cycle detection</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="dependencies"><strong>Dependencies</strong></h2>
+<ul>
+<li>std::fs&nbsp;- File operations</li>
+<li>std::collections::{HashMap, HashSet}&nbsp;- Indexes</li>
+<li>std::sync::{Arc, RwLock}&nbsp;- Thread-safe hot reload</li>
+<li>std::path::PathBuf&nbsp;- Path handling</li>
+<li>ipnetwork&nbsp;(optional) - CIDR parsing&nbsp;for IP lists</li>
+<li>notify&nbsp;(optional) - File system&nbsp;watcher for&nbsp;hot reload</li>
+</ul>

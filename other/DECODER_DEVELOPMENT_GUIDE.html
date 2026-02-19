@@ -1,0 +1,579 @@
+<h1 id="decoder-development-guide">Decoder Development Guide</h1>
+<hr>
+<h2 id="overview">Overview</h2>
+<p>This guide explains how to create new decoders for the Security Rule Engine using the simplified JSON format with unified field mapping.</p>
+<hr>
+<h2 id="navigation">Navigation</h2>
+<ul>
+<li><a href="DECODER_SELECTION_FLOW.md">Selection Flow</a></li>
+<li><a href="decoder/JSON-Structure.md">JSON Structure</a></li>
+<li><a href="decoder/Unified-Structure.md">Unified Structure</a></li>
+</ul>
+<hr>
+<h2 id="architecture-overview">Architecture Overview</h2>
+<h3 id="the-processing-pipeline">The Processing Pipeline</h3>
+<pre><code>┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Raw Log       │───&gt;│   Detection     │───&gt;│   Parsing       │───&gt;│   Normalization │
+│   (Syslog)      │    │   (detect)      │    │   (kv_format)   │    │   (PHF mapping) │
+└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+                              │                       │                       │
+                              v                       v                       v
+                       Match keywords          Parse KV pairs          Map to unified
+                       to identify             into HashMap            schema fields
+                       vendor/product          {"srcip": "..."}        {src_ip: "..."}
+</code></pre>
+<h3 id="what-happens-at-each-stage">What Happens at Each Stage</h3>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Purpose</th>
+<th>Decoder Config Section</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Detection</td>
+<td>Identify which decoder handles this log</td>
+<td><code>detect</code></td>
+</tr>
+<tr>
+<td>Parsing</td>
+<td>Extract key-value pairs from raw log</td>
+<td><code>parsing.kv_format</code></td>
+</tr>
+<tr>
+<td>Normalization</td>
+<td>Map vendor fields to FCT unified schema</td>
+<td>Automatic via PHF</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="decoder-json-schema-v2">Decoder JSON Schema (v2)</h2>
+<h3 id="minimal-required-fields">Minimal Required Fields</h3>
+<pre><code class="language-json">{
+    "schema_version": 2,
+    "vendor": "vendor_name",
+    "product": "product_name",
+    "format": "kv_direct",
+    "detect": { ... },
+    "parsing": { ... }
+}
+</code></pre>
+<h3 id="complete-schema-reference">Complete Schema Reference</h3>
+<pre><code class="language-json">{
+    "schema_version": 2,
+    "vendor": "string (required) - vendor identifier (lowercase)",
+    "product": "string (required) - product identifier", 
+    "format": "kv_direct | regex | json | syslog",
+    "detect": {
+        "contains": ["array of strings that MUST be present in log"],
+        "not_contains": ["array of strings that MUST NOT be present (optional)"],
+        "regex": "optional regex pattern for more precise matching",
+        "priority": "integer (higher = checked first, default: 0)"
+    },
+    "parsing": {
+        "kv_format": {
+            "pair_delimiter": " (space between key=value pairs)",
+            "kv_delimiter": "= (between key and value)"
+        },
+        "patterns": [
+            {
+                "name": "pattern_name",
+                "regex": "regex with named groups (?P&lt;name&gt;...). Use (?P&lt;kv_data&gt;...) to capture the KV portion",
+                "event_type": "firewall | endpoint | network | auth | etc"
+            }
+        ]
+        // NOTE: For kv_direct format, patterns run FIRST to extract syslog headers,
+        // then the kv_data capture is parsed as key-value pairs.
+        // All fields are merged together.
+    },
+    "normalize": {
+        "name": "optional product name override",
+        "action": {
+            "from_event": {
+                "EventType1": "normalized_action1",
+                "EventType2": "normalized_action2"
+            }
+        },
+        "status": {
+            "from_event": {
+                "EventType1": "success",
+                "EventType2": "blocked"
+            }
+        }
+    },
+    "severity_mapping": {
+        "regex": {
+            "severity=\"Critical\"": "critical",
+            "severity=\"Warning\"": "medium",
+            "default_pattern": "info"
+        }
+    }
+}
+</code></pre>
+<hr>
+<h2 id="step-by-step-creating-a-new-decoder">Step-by-Step: Creating a New Decoder</h2>
+<h3 id="step-1-identify-the-log-format">Step 1: Identify the Log Format</h3>
+<p>Collect sample logs and identify:</p>
+<ol>
+<li><strong>Unique identifiers</strong> - strings that appear ONLY in this vendor's logs</li>
+<li><strong>Key-value format</strong> - what separates pairs? what separates key from value?</li>
+<li><strong>Field names</strong> - what does the vendor call their fields?</li>
+</ol>
+<p>Example Fortigate log:</p>
+<pre><code>date=2019-05-10 time=11:37:47 logid="0000000013" type="traffic" srcip=10.1.100.11 dstip=23.59.154.35 dstport=80 action="close"
+</code></pre>
+<p>Analysis:</p>
+<ul>
+<li>Unique identifiers: <code>logid="</code>, <code>type="traffic"</code>, etc.</li>
+<li>KV format: space-separated pairs, <code>=</code> delimiter</li>
+<li>Fields: <code>srcip</code>, <code>dstip</code>, <code>dstport</code>, <code>action</code></li>
+</ul>
+<h3 id="step-2-create-the-decoder-json-file">Step 2: Create the Decoder JSON File</h3>
+<p>Create a new file in: <code>logtest/decoders/vendors/{vendor}/{product}.json</code></p>
+<pre><code class="language-json">{
+    "schema_version": 2,
+    "vendor": "fortinet",
+    "product": "fortigate",
+    "format": "kv_direct",
+    "detect": {
+        "contains": [
+            "logid=\"",
+            "devname="
+        ],
+        "priority": 10
+    },
+    "parsing": {
+        "kv_format": {
+            "pair_delimiter": " ",
+            "kv_delimiter": "="
+        },
+        "patterns": [
+            {
+                "name": "fortigate_traffic",
+                "regex": "^(?P&lt;kv_data&gt;.*)",
+                "event_type": "firewall"
+            }
+        ]
+    },
+    "normalize": {
+        "name": "fortinet-fw-ng",
+        "action": {
+            "from_event": {
+                "accept": "allow",
+                "deny": "deny",
+                "close": "close",
+                "drop": "drop"
+            }
+        }
+    }
+}
+</code></pre>
+<h3 id="step-3-no-manual-field-mapping-required">Step 3: No Manual Field Mapping Required!</h3>
+<p>With schema_version 2, field mapping is <strong>automatic</strong> via the PHF (Perfect Hash Function) global table.</p>
+<p>The system automatically maps common vendor field names:</p>
+<table>
+<thead>
+<tr>
+<th>Vendor Field</th>
+<th>→</th>
+<th>Unified Schema Field</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>srcip</code></td>
+<td>→</td>
+<td><code>src_ip</code></td>
+</tr>
+<tr>
+<td><code>dstip</code></td>
+<td>→</td>
+<td><code>dst_ip</code></td>
+</tr>
+<tr>
+<td><code>srcport</code></td>
+<td>→</td>
+<td><code>src_port</code></td>
+</tr>
+<tr>
+<td><code>dstport</code></td>
+<td>→</td>
+<td><code>dst_port</code></td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td>→</td>
+<td><code>user</code></td>
+</tr>
+<tr>
+<td><code>action</code></td>
+<td>→</td>
+<td><code>action</code></td>
+</tr>
+<tr>
+<td>...and 200+ more mappings</td>
+<td></td>
+<td></td>
+</tr>
+</tbody></table>
+<p>See <code>src/unified_field_map.rs</code> for the complete mapping table.</p>
+<h3 id="step-3b-extracting-syslog-headers-optional">Step 3b: Extracting Syslog Headers (Optional)</h3>
+<p>For logs with syslog prefixes (timestamp, hostname, gateway), use a pattern with named captures:</p>
+<pre><code class="language-json">"parsing": {
+    "kv_format": {
+        "pair_delimiter": " ",
+        "kv_delimiter": "="
+    },
+    "patterns": [
+        {
+            "name": "sophos_firewall_syslog",
+            "regex": "^(?P&lt;syslog_timestamp&gt;\\d{4}-\\d{2}-\\d{2}T[\\d:.+]+)\\s+(?P&lt;gateway&gt;\\S+)\\s+(?P&lt;kv_data&gt;.*)",
+            "event_type": "firewall"
+        }
+    ]
+}
+</code></pre>
+<p><strong>How it works for <code>kv_direct</code> format:</strong></p>
+<ol>
+<li>Pattern regex runs first → extracts <code>syslog_timestamp</code>, <code>gateway</code>, and <code>kv_data</code></li>
+<li>KV parser processes the <code>kv_data</code> portion → extracts <code>device_name</code>, <code>src_ip</code>, etc.</li>
+<li>All fields are merged together</li>
+</ol>
+<p><strong>Example:</strong></p>
+<pre><code>Input:  "2025-12-03T11:14:34+05:30 _gateway device_name="SFW" src_ip="10.1.1.1""
+
+After pattern:
+  syslog_timestamp = "2025-12-03T11:14:34+05:30"
+  gateway = "_gateway"
+  kv_data = "device_name=\"SFW\" src_ip=\"10.1.1.1\""
+
+After KV parse (on kv_data):
+  device_name = "SFW"
+  src_ip = "10.1.1.1"
+
+Final merged result:
+  syslog_timestamp = "2025-12-03T11:14:34+05:30"
+  gateway = "_gateway"
+  device_name = "SFW"
+  src_ip = "10.1.1.1"
+</code></pre>
+<h3 id="step-4-test-your-decoder">Step 4: Test Your Decoder</h3>
+<pre><code class="language-bash"># From backend directory
+./logtest/logtest-cli &lt;&lt;&lt; 'date=2019-05-10 time=11:37:47 srcip=10.1.100.11 dstip=23.59.154.35'
+</code></pre>
+<hr>
+<h2 id="field-mapping-how-it-works">Field Mapping: How It Works</h2>
+<h3 id="the-phf-perfect-hash-function-advantage">The PHF (Perfect Hash Function) Advantage</h3>
+<p>Traditional approach (schema_version 1):</p>
+<pre><code class="language-json">"map": {
+    "srcip": "src_ip",
+    "dstip": "dst_ip",
+    "srcport": "src_port",
+    ... (100+ lines per decoder!)
+}
+</code></pre>
+<p>New approach (schema_version 2):</p>
+<pre><code>No "map" section needed - it's automatic!
+</code></pre>
+<h3 id="how-the-global-mapping-works">How the Global Mapping Works</h3>
+<pre><code>Raw Log: srcip=10.1.1.1 dstport=443 user=admin
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    UNIFIED_FIELD_MAP (PHF)                      │
+    │  ┌─────────────────────────────────────────────────────────────┐│
+    │  │ "srcip"    → "src_ip"                                       ││
+    │  │ "dstport"  → "dst_port"                                     ││
+    │  │ "user"     → "user"                                         ││
+    │  │ ... 200+ vendor variations ...                              ││
+    │  └─────────────────────────────────────────────────────────────┘│
+    └─────────────────────────────────────────────────────────────────┘
+                                  │
+                                  v
+    NormalizedEvent {
+        src_ip: Some("10.1.1.1"),
+        dst_port: Some(443),
+        user: Some("admin"),
+        ...
+    }
+</code></pre>
+<h3 id="supported-field-categories">Supported Field Categories</h3>
+<p>The unified mapping covers:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Example Raw Names</th>
+<th>Unified Name</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Source IP</strong></td>
+<td>srcip, source_ip, sip, clientip</td>
+<td><code>src_ip</code></td>
+</tr>
+<tr>
+<td><strong>Dest IP</strong></td>
+<td>dstip, dest_ip, dip, destAddress</td>
+<td><code>dst_ip</code></td>
+</tr>
+<tr>
+<td><strong>Source Port</strong></td>
+<td>srcport, sport, client_port</td>
+<td><code>src_port</code></td>
+</tr>
+<tr>
+<td><strong>Dest Port</strong></td>
+<td>dstport, dport, destination_port</td>
+<td><code>dst_port</code></td>
+</tr>
+<tr>
+<td><strong>User</strong></td>
+<td>user, username, user_name, acct</td>
+<td><code>user</code></td>
+</tr>
+<tr>
+<td><strong>Action</strong></td>
+<td>action, Action, utm_action</td>
+<td><code>action</code></td>
+</tr>
+<tr>
+<td><strong>Protocol</strong></td>
+<td>protocol, proto, Protocol</td>
+<td><code>protocol</code></td>
+</tr>
+<tr>
+<td><strong>Application</strong></td>
+<td>app, application, appname</td>
+<td><code>application</code></td>
+</tr>
+<tr>
+<td><strong>File Path</strong></td>
+<td>file_path, filepath, filePath</td>
+<td><code>file_path</code></td>
+</tr>
+<tr>
+<td><strong>Process</strong></td>
+<td>process, process_name, proc</td>
+<td><code>process_name</code></td>
+</tr>
+<tr>
+<td><strong>Threat</strong></td>
+<td>threat_name, threatname, virus</td>
+<td><code>threat_name</code></td>
+</tr>
+</tbody></table>
+<h3 id="what-if-my-vendor-uses-an-unmapped-field-name">What If My Vendor Uses an Unmapped Field Name?</h3>
+<p>Two options:</p>
+<p><strong>Option A: Add to Global PHF</strong> (Recommended for common fields)</p>
+<ol>
+<li>Edit <code>src/unified_field_map.rs</code></li>
+<li>Add your mapping to the <code>UNIFIED_FIELD_MAP</code></li>
+<li>Rebuild the engine</li>
+</ol>
+<pre><code class="language-rust">// In unified_field_map.rs, add:
+"my_vendor_srcip" =&gt; "src_ip",
+</code></pre>
+<p><strong>Option B: Use Fallback to extracted_fields</strong></p>
+<ul>
+<li>Unmapped fields are automatically stored in <code>extracted_fields</code> HashMap</li>
+<li>Rules can still reference them via the original field name</li>
+</ul>
+<hr>
+<h2 id="testing-your-decoder">Testing Your Decoder</h2>
+<h3 id="using-logtest-cli">Using logtest-cli</h3>
+<pre><code class="language-bash"># Single log test
+./logtest/logtest-cli &lt;&lt;&lt; 'your log here'
+
+# From file
+./logtest/logtest-cli -f sample_logs.txt
+
+# Verbose output
+./logtest/logtest-cli -v &lt;&lt;&lt; 'your log here'
+</code></pre>
+<h3 id="what-to-verify">What to Verify</h3>
+<ol>
+<li><p><strong>Detection</strong>: Does the correct decoder get selected?</p>
+<pre><code>[DEBUG] Decoded vendor: 'your_vendor', product: 'your_product'
+</code></pre>
+</li>
+<li><p><strong>Field Extraction</strong>: Are all fields parsed?</p>
+<pre><code>**Phase 2: Completed decoding.
+src_ip: '10.1.1.1'
+dst_port: '443'
+user: 'admin'
+</code></pre>
+</li>
+<li><p><strong>Unified Mapping</strong>: Are vendor fields mapped correctly?</p>
+<ul>
+<li><code>srcip</code> should appear as <code>src_ip</code> in output</li>
+<li><code>dstport</code> should appear as <code>dst_port</code></li>
+</ul>
+</li>
+<li><p><strong>Rule Matching</strong>: Do your rules fire?</p>
+<pre><code>**Phase 3: Completed filtering (rules).
+id: '100001'
+description: 'Your rule description'
+</code></pre>
+</li>
+</ol>
+<hr>
+<h2 id="complete-examples">Complete Examples</h2>
+<h3 id="example-1-sophos-firewall-decoder">Example 1: Sophos Firewall Decoder</h3>
+<pre><code class="language-json">{
+    "schema_version": 2,
+    "vendor": "sophos",
+    "product": "firewall",
+    "format": "kv_direct",
+    "detect": {
+        "contains": [
+            "device_name=\"",
+            "device_serial_id=\""
+        ],
+        "priority": 10
+    },
+    "parsing": {
+        "kv_format": {
+            "pair_delimiter": " ",
+            "kv_delimiter": "="
+        },
+        "patterns": [
+            {
+                "name": "sophos_firewall_syslog",
+                "regex": "^(?P&lt;syslog_timestamp&gt;\\d{4}-\\d{2}-\\d{2}T[\\d:.+]+)\\s+(?P&lt;gateway&gt;\\S+)\\s+(?P&lt;kv_data&gt;.*)",
+                "event_type": "firewall"
+            }
+        ]
+    },
+    "normalize": {
+        "name": "sophos-fw-ng",
+        "action": {
+            "from_event": {
+                "Allowed": "allow",
+                "Denied": "deny",
+                "Dropped": "drop"
+            }
+        }
+    },
+    "severity_mapping": {
+        "regex": {
+            "severity=\"Critical\"": "critical",
+            "severity=\"Warning\"": "medium",
+            "severity=\"Information\"": "info"
+        }
+    }
+}
+</code></pre>
+<h3 id="example-2-palo-alto-firewall-decoder">Example 2: Palo Alto Firewall Decoder</h3>
+<pre><code class="language-json">{
+    "schema_version": 2,
+    "vendor": "palo_alto",
+    "product": "firewall",
+    "format": "kv_direct",
+    "detect": {
+        "contains": [
+            "PALO_ALTO",
+            "TRAFFIC"
+        ],
+        "priority": 10
+    },
+    "parsing": {
+        "kv_format": {
+            "pair_delimiter": ",",
+            "kv_delimiter": "="
+        },
+        "patterns": [
+            {
+                "name": "pan_traffic",
+                "regex": "^(?P&lt;kv_data&gt;.*)",
+                "event_type": "firewall"
+            }
+        ]
+    },
+    "normalize": {
+        "name": "pan-fw-ng"
+    }
+}
+</code></pre>
+<h3 id="example-3-windows-event-log-decoder">Example 3: Windows Event Log Decoder</h3>
+<pre><code class="language-json">{
+    "schema_version": 2,
+    "vendor": "microsoft",
+    "product": "windows",
+    "format": "kv_direct",
+    "detect": {
+        "contains": [
+            "EventID=",
+            "Computer="
+        ],
+        "priority": 5
+    },
+    "parsing": {
+        "kv_format": {
+            "pair_delimiter": " ",
+            "kv_delimiter": "="
+        },
+        "patterns": [
+            {
+                "name": "windows_security",
+                "regex": "^(?P&lt;kv_data&gt;.*)",
+                "event_type": "endpoint"
+            }
+        ]
+    },
+    "normalize": {
+        "name": "windows-security"
+    }
+}
+</code></pre>
+<hr>
+<h2 id="migration-from-schema-v1-to-v2">Migration: From Schema v1 to v2</h2>
+<p>If you have existing decoders with explicit <code>extract</code> and <code>map</code> sections:</p>
+<h3 id="before-v1">Before (v1):</h3>
+<pre><code class="language-json">{
+    "schema_version": 1,
+    "extract": {
+        "src_ip": "src_ip",
+        "srcip": "srcip",
+        ... (many lines)
+    },
+    "map": {
+        "srcip": "src_ip",
+        "dstip": "dst_ip",
+        ... (many lines)
+    }
+}
+</code></pre>
+<h3 id="after-v2">After (v2):</h3>
+<pre><code class="language-json">{
+    "schema_version": 2
+    // Remove "extract" section entirely
+    // Remove "map" section entirely
+    // Keep: detect, parsing, normalize, severity_mapping
+}
+</code></pre>
+<p>That's it! The global PHF handles all field mapping automatically.</p>
+<hr>
+<h2 id="faq">FAQ</h2>
+<p><strong>Q: What if my vendor uses a completely unique field name?</strong><br>A: Add it to <code>src/unified_field_map.rs</code> and rebuild. This benefits all future decoders.</p>
+<p><strong>Q: Can I still use explicit mapping for edge cases?</strong><br>A: Yes. If your decoder has a <code>map</code> section, it will be used instead of the global PHF (legacy mode).</p>
+<p><strong>Q: How do I handle multi-format logs (some JSON, some KV)?</strong><br>A: Create separate decoders with different <code>detect</code> patterns, or use regex patterns in <code>parsing.patterns</code>.</p>
+<p><strong>Q: What's the performance difference?</strong><br>A: PHF is O(1) compile-time hash with zero collisions. The JSON-based KV parsing is ~6x faster than regex.</p>
+<hr>
+<h2 id="quick-reference-card">Quick Reference Card</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                    DECODER CHECKLIST                            │
+├─────────────────────────────────────────────────────────────────┤
+│ ✓ schema_version: 2                                             │
+│ ✓ vendor: lowercase identifier                                  │
+│ ✓ product: product name                                         │
+│ ✓ format: "kv_direct" (for KV logs)                             │
+│ ✓ detect.contains: unique strings for this vendor               │
+│ ✓ parsing.kv_format: pair and kv delimiters                     │
+│ ✗ extract: NOT NEEDED (auto via PHF)                            │
+│ ✗ map: NOT NEEDED (auto via PHF)                                │
+│ ~ normalize: optional action/status mappings                    │
+│ ~ severity_mapping: optional severity overrides                 │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<p><em>Last Updated: February 2026</em><br><em>Engine Version: 1.0.0</em><br><em>Schema Version: 2</em></p>
