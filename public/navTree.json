@@ -1,0 +1,148 @@
+{
+  "versions": [
+    "latest",
+    "v1.0"
+  ],
+  "navTree": {
+    "latest": [
+      {
+        "id": "rule-engine",
+        "label": "RULE ENGINE",
+        "children": [
+          {
+            "id": "rule-engine-latest-01-rule-engine",
+            "label": "Rule Engine",
+            "path": "RULE_ENGINE/latest/01.Rule_Engine/01.Architecture.md",
+            "children": [
+              {
+                "id": "rule-engine-latest-01-rule-engine-01-architecture-md",
+                "label": "Architecture",
+                "path": "RULE_ENGINE/latest/01.Rule_Engine/01.Architecture.md"
+              }
+            ]
+          },
+          {
+            "id": "rule-engine-latest-02-decoder",
+            "label": "Decoder",
+            "path": "RULE_ENGINE/latest/02.Decoder/01.DECODER_DEVELOPMENT_GUIDE.md",
+            "children": [
+              {
+                "id": "rule-engine-latest-02-decoder-01-decoder-development-guide-md",
+                "label": "DECODER DEVELOPMENT GUIDE",
+                "path": "RULE_ENGINE/latest/02.Decoder/01.DECODER_DEVELOPMENT_GUIDE.md"
+              },
+              {
+                "id": "rule-engine-latest-02-decoder-02-decoder-selection-flow-md",
+                "label": "DECODER SELECTION FLOW",
+                "path": "RULE_ENGINE/latest/02.Decoder/02.DECODER_SELECTION_FLOW.md"
+              }
+            ]
+          },
+          {
+            "id": "rule-engine-latest-3-rules",
+            "label": "Rules",
+            "path": "RULE_ENGINE/latest/3.Rules/01.DSL_ARCHITECTURE.md",
+            "children": [
+              {
+                "id": "rule-engine-latest-3-rules-01-dsl-architecture-md",
+                "label": "DSL ARCHITECTURE",
+                "path": "RULE_ENGINE/latest/3.Rules/01.DSL_ARCHITECTURE.md"
+              },
+              {
+                "id": "rule-engine-latest-3-rules-02-dsl-complete-guide-md",
+                "label": "DSL COMPLETE GUIDE",
+                "path": "RULE_ENGINE/latest/3.Rules/02.DSL_COMPLETE_GUIDE.md"
+              },
+              {
+                "id": "rule-engine-latest-3-rules-03-dsl-rule-manager-implementation-md",
+                "label": "DSL RULE MANAGER IMPLEMENTATION",
+                "path": "RULE_ENGINE/latest/3.Rules/03.DSL_RULE_MANAGER_IMPLEMENTATION.md"
+              },
+              {
+                "id": "rule-engine-latest-3-rules-04-dsl-loader-v2-technical-design-document-md",
+                "label": "DSL Loader V2   Technical Design Document",
+                "path": "RULE_ENGINE/latest/3.Rules/04.DSL_Loader_V2_-_Technical_Design_Document.md"
+              },
+              {
+                "id": "rule-engine-latest-3-rules-05-wazuh-xml-vs-dsl-md",
+                "label": "Wazuh Xml Vs Dsl",
+                "path": "RULE_ENGINE/latest/3.Rules/05.Wazuh_xml_vs_dsl.md"
+              }
+            ]
+          }
+        ],
+        "path": "RULE_ENGINE/latest/01.Rule_Engine/01.Architecture.md"
+      }
+    ],
+    "v1.0": [
+      {
+        "id": "rule-engine",
+        "label": "RULE ENGINE",
+        "children": [
+          {
+            "id": "rule-engine-v1-0-01-rule-engine",
+            "label": "Rule Engine",
+            "path": "RULE_ENGINE/v1.0/01.Rule_Engine/01.Architecture.md",
+            "children": [
+              {
+                "id": "rule-engine-v1-0-01-rule-engine-01-architecture-md",
+                "label": "Architecture",
+                "path": "RULE_ENGINE/v1.0/01.Rule_Engine/01.Architecture.md"
+              }
+            ]
+          },
+          {
+            "id": "rule-engine-v1-0-02-decoder",
+            "label": "Decoder",
+            "path": "RULE_ENGINE/v1.0/02.Decoder/01.DECODER_DEVELOPMENT_GUIDE.md",
+            "children": [
+              {
+                "id": "rule-engine-v1-0-02-decoder-01-decoder-development-guide-md",
+                "label": "DECODER DEVELOPMENT GUIDE",
+                "path": "RULE_ENGINE/v1.0/02.Decoder/01.DECODER_DEVELOPMENT_GUIDE.md"
+              },
+              {
+                "id": "rule-engine-v1-0-02-decoder-02-decoder-selection-flow-md",
+                "label": "DECODER SELECTION FLOW",
+                "path": "RULE_ENGINE/v1.0/02.Decoder/02.DECODER_SELECTION_FLOW.md"
+              }
+            ]
+          },
+          {
+            "id": "rule-engine-v1-0-3-rules",
+            "label": "Rules",
+            "path": "RULE_ENGINE/v1.0/3.Rules/01.DSL_ARCHITECTURE.md",
+            "children": [
+              {
+                "id": "rule-engine-v1-0-3-rules-01-dsl-architecture-md",
+                "label": "DSL ARCHITECTURE",
+                "path": "RULE_ENGINE/v1.0/3.Rules/01.DSL_ARCHITECTURE.md"
+              },
+              {
+                "id": "rule-engine-v1-0-3-rules-02-dsl-complete-guide-md",
+                "label": "DSL COMPLETE GUIDE",
+                "path": "RULE_ENGINE/v1.0/3.Rules/02.DSL_COMPLETE_GUIDE.md"
+              },
+              {
+                "id": "rule-engine-v1-0-3-rules-03-dsl-rule-manager-implementation-md",
+                "label": "DSL RULE MANAGER IMPLEMENTATION",
+                "path": "RULE_ENGINE/v1.0/3.Rules/03.DSL_RULE_MANAGER_IMPLEMENTATION.md"
+              },
+              {
+                "id": "rule-engine-v1-0-3-rules-04-dsl-loader-v2-technical-design-document-md",
+                "label": "DSL Loader V2   Technical Design Document",
+                "path": "RULE_ENGINE/v1.0/3.Rules/04.DSL_Loader_V2_-_Technical_Design_Document.md"
+              },
+              {
+                "id": "rule-engine-v1-0-3-rules-05-wazuh-xml-vs-dsl-md",
+                "label": "Wazuh Xml Vs Dsl",
+                "path": "RULE_ENGINE/v1.0/3.Rules/05.Wazuh_xml_vs_dsl.md"
+              }
+            ]
+          }
+        ],
+        "path": "RULE_ENGINE/v1.0/01.Rule_Engine/01.Architecture.md"
+      }
+    ]
+  }
+}
