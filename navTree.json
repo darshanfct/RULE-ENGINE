@@ -39,34 +39,34 @@
             ]
           },
           {
-            "id": "rule-engine-latest-3-rules",
+            "id": "rule-engine-latest-03-rules",
             "label": "Rules",
-            "path": "RULE_ENGINE/latest/3.Rules/01.DSL_ARCHITECTURE.md",
+            "path": "RULE_ENGINE/latest/03.Rules/01.DSL_ARCHITECTURE.md",
             "children": [
               {
-                "id": "rule-engine-latest-3-rules-01-dsl-architecture-md",
+                "id": "rule-engine-latest-03-rules-01-dsl-architecture-md",
                 "label": "DSL ARCHITECTURE",
-                "path": "RULE_ENGINE/latest/3.Rules/01.DSL_ARCHITECTURE.md"
+                "path": "RULE_ENGINE/latest/03.Rules/01.DSL_ARCHITECTURE.md"
               },
               {
-                "id": "rule-engine-latest-3-rules-02-dsl-complete-guide-md",
+                "id": "rule-engine-latest-03-rules-02-dsl-complete-guide-md",
                 "label": "DSL COMPLETE GUIDE",
-                "path": "RULE_ENGINE/latest/3.Rules/02.DSL_COMPLETE_GUIDE.md"
+                "path": "RULE_ENGINE/latest/03.Rules/02.DSL_COMPLETE_GUIDE.md"
               },
               {
-                "id": "rule-engine-latest-3-rules-03-dsl-rule-manager-implementation-md",
+                "id": "rule-engine-latest-03-rules-03-dsl-rule-manager-implementation-md",
                 "label": "DSL RULE MANAGER IMPLEMENTATION",
-                "path": "RULE_ENGINE/latest/3.Rules/03.DSL_RULE_MANAGER_IMPLEMENTATION.md"
+                "path": "RULE_ENGINE/latest/03.Rules/03.DSL_RULE_MANAGER_IMPLEMENTATION.md"
               },
               {
-                "id": "rule-engine-latest-3-rules-04-dsl-loader-v2-technical-design-document-md",
+                "id": "rule-engine-latest-03-rules-04-dsl-loader-v2-technical-design-document-md",
                 "label": "DSL Loader V2   Technical Design Document",
-                "path": "RULE_ENGINE/latest/3.Rules/04.DSL_Loader_V2_-_Technical_Design_Document.md"
+                "path": "RULE_ENGINE/latest/03.Rules/04.DSL_Loader_V2_-_Technical_Design_Document.md"
               },
               {
-                "id": "rule-engine-latest-3-rules-05-wazuh-xml-vs-dsl-md",
+                "id": "rule-engine-latest-03-rules-05-wazuh-xml-vs-dsl-md",
                 "label": "Wazuh Xml Vs Dsl",
-                "path": "RULE_ENGINE/latest/3.Rules/05.Wazuh_xml_vs_dsl.md"
+                "path": "RULE_ENGINE/latest/03.Rules/05.Wazuh_xml_vs_dsl.md"
               }
             ]
           }
